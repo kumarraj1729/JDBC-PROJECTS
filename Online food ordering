@@ -1,0 +1,452 @@
+package onlinefoodordering;
+
+
+import java.sql.*;
+import java.util.*;
+
+public class FoodOrderingSystem {
+
+    private static final String URL =
+            "jdbc:mysql://localhost:3306/onlinefoodordering";
+    private static final String USER = "root";
+    private static final String PASSWORD = "12345";
+
+    private static final Scanner sc = new Scanner(System.in);
+
+    // Establish JDBC connection
+    private static Connection getConnection()
+            throws SQLException {
+        return DriverManager.getConnection(URL, USER, PASSWORD);
+    }
+
+    public static void main(String[] args) {
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+
+            while (true) {
+                System.out.println("\n===== ONLINE FOOD ORDERING SYSTEM =====");
+                System.out.println("1. Customer Registration");
+                System.out.println("2. View Menu");
+                System.out.println("3. Place Order");
+                System.out.println("4. Order History");
+                System.out.println("5. Generate Bill");
+                System.out.println("0. Exit");
+                System.out.print("Enter your choice: ");
+
+                int choice = readInt();
+
+                try {
+                    switch (choice) {
+                        case 1:
+                            registerCustomer();
+                            break;
+                        case 2:
+                            viewMenu();
+                            break;
+                        case 3:
+                            placeOrder();
+                            break;
+                        case 4:
+                            orderHistory();
+                            break;
+                        case 5:
+                            generateBill();
+                            break;
+                        case 0:
+                            System.out.println("Thank you!");
+                            return;
+                        default:
+                            System.out.println("Invalid choice.");
+                    }
+                } catch (SQLException e) {
+                	e.printStackTrace();
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Application error: "
+                    + e.getMessage());
+        }
+    }
+
+    // Read an integer safely
+    private static int readInt() {
+        while (!sc.hasNextInt()) {
+            System.out.print("Enter a valid number: ");
+            sc.next();
+        }
+        int value = sc.nextInt();
+        sc.nextLine();
+        return value;
+    }
+
+    // Module 1: Customer Registration
+    private static void registerCustomer()
+            throws SQLException {
+
+        System.out.println("\n--- Customer Registration ---");
+
+        System.out.print("Enter name: ");
+        String name = sc.nextLine().trim();
+
+        System.out.print("Enter email: ");
+        String email = sc.nextLine().trim();
+
+        System.out.print("Enter phone: ");
+        String phone = sc.nextLine().trim();
+
+        System.out.print("Enter address: ");
+        String address = sc.nextLine().trim();
+
+        if (name.isEmpty() || email.isEmpty()
+                || phone.isEmpty() || address.isEmpty()) {
+            System.out.println("All fields are required.");
+            return;
+        }
+
+        String sql = "INSERT INTO customers "
+                + "(name, email, phone, address) "
+                + "VALUES (?, ?, ?, ?)";
+
+        try (Connection con = getConnection();
+             PreparedStatement ps =
+                     con.prepareStatement(
+                             sql, Statement.RETURN_GENERATED_KEYS)) {
+
+            ps.setString(1, name);
+            ps.setString(2, email);
+            ps.setString(3, phone);
+            ps.setString(4, address);
+
+            ps.executeUpdate();
+
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    System.out.println("Registration successful!");
+                    System.out.println("Customer ID: "
+                            + rs.getInt(1));
+                }
+            }
+        }
+    }
+
+    // Module 2: View Menu
+    private static void viewMenu() throws SQLException {
+
+        String sql = "SELECT item_id, item_name, price "
+                + "FROM menu WHERE available = TRUE "
+                + "ORDER BY item_id";
+
+        System.out.println("\n--- Restaurant Menu ---");
+
+        try (Connection con = getConnection();
+             PreparedStatement ps = con.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            System.out.printf("%-8s %-25s %10s%n",
+                    "ID", "Food Item", "Price");
+            System.out.println("--------------------------------------------");
+
+            while (rs.next()) {
+                System.out.printf("%-8d %-25s %10.2f%n",
+                        rs.getInt("item_id"),
+                        rs.getString("item_name"),
+                        rs.getDouble("price"));
+            }
+        }
+    }
+
+    // Module 3: Place Order
+    // Master: orders; Details: order_items
+    private static void placeOrder() throws SQLException {
+
+        System.out.print("Enter Customer ID: ");
+        int customerId = readInt();
+
+        // Collect requested items before beginning the transaction.
+        Map<Integer, Integer> cart = new LinkedHashMap<>();
+
+        viewMenu();
+
+        System.out.println(
+                "\nEnter item ID and quantity. Enter 0 as item ID to finish.");
+
+        while (true) {
+            System.out.print("Item ID: ");
+            int itemId = readInt();
+
+            if (itemId == 0) {
+                break;
+            }
+
+            if (itemId < 0) {
+                System.out.println("Invalid item ID.");
+                continue;
+            }
+
+            System.out.print("Quantity: ");
+            int quantity = readInt();
+
+            if (quantity <= 0) {
+                System.out.println(
+                        "Quantity must be greater than zero.");
+                continue;
+            }
+
+            try {
+                cart.merge(itemId, quantity, Math::addExact);
+            } catch (ArithmeticException e) {
+                System.out.println("Quantity is too large.");
+            }
+        }
+
+        if (cart.isEmpty()) {
+            System.out.println("No items selected.");
+            return;
+        }
+
+        String customerSql =
+                "SELECT customer_id FROM customers "
+                + "WHERE customer_id = ?";
+
+        String menuSql =
+                "SELECT item_name, price FROM menu "
+                + "WHERE item_id = ? AND available = TRUE";
+
+        String orderSql =
+                "INSERT INTO orders (customer_id, total_amount) "
+                + "VALUES (?, 0)";
+
+        String detailSql =
+                "INSERT INTO order_items "
+                + "(order_id, item_id, quantity, price) "
+                + "VALUES (?, ?, ?, ?)";
+
+        String totalSql =
+                "UPDATE orders SET total_amount = ? "
+                + "WHERE order_id = ?";
+
+        try (Connection con = getConnection()) {
+
+            con.setAutoCommit(false);
+
+            try {
+                // Validate the customer.
+                try (PreparedStatement ps =
+                             con.prepareStatement(customerSql)) {
+                    ps.setInt(1, customerId);
+
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            throw new SQLException(
+                                    "Customer ID does not exist.");
+                        }
+                    }
+                }
+
+                // Create the master order record.
+                int orderId;
+
+                try (PreparedStatement ps = con.prepareStatement(
+                        orderSql, Statement.RETURN_GENERATED_KEYS)) {
+
+                    ps.setInt(1, customerId);
+                    ps.executeUpdate();
+
+                    try (ResultSet rs = ps.getGeneratedKeys()) {
+                        if (!rs.next()) {
+                            throw new SQLException(
+                                    "Could not create order.");
+                        }
+                        orderId = rs.getInt(1);
+                    }
+                }
+
+                double total = 0;
+
+                // Create the detail records.
+                try (PreparedStatement menuPs =
+                             con.prepareStatement(menuSql);
+                     PreparedStatement detailPs =
+                             con.prepareStatement(detailSql)) {
+
+                    for (Map.Entry<Integer, Integer> entry
+                            : cart.entrySet()) {
+
+                        int itemId = entry.getKey();
+                        int quantity = entry.getValue();
+
+                        menuPs.setInt(1, itemId);
+
+                        try (ResultSet rs = menuPs.executeQuery()) {
+                            if (!rs.next()) {
+                                throw new SQLException(
+                                        "Item " + itemId
+                                        + " is unavailable.");
+                            }
+
+                            String itemName =
+                                    rs.getString("item_name");
+                            double price = rs.getDouble("price");
+
+                            double subtotal = price * quantity;
+                            total += subtotal;
+
+                            detailPs.setInt(1, orderId);
+                            detailPs.setInt(2, itemId);
+                            detailPs.setInt(3, quantity);
+                            detailPs.setBigDecimal(4,
+                                    rs.getBigDecimal("price"));
+                            detailPs.executeUpdate();
+
+                            System.out.printf(
+                                    "%s x %d = %.2f%n",
+                                    itemName, quantity, subtotal);
+                        }
+                    }
+                }
+
+                // Update the master order total.
+                try (PreparedStatement ps =
+                             con.prepareStatement(totalSql)) {
+                    ps.setBigDecimal(1,
+                            java.math.BigDecimal.valueOf(total));
+                    ps.setInt(2, orderId);
+                    ps.executeUpdate();
+                }
+
+                // Save master and detail records together.
+                con.commit();
+
+                System.out.println("\nOrder placed successfully!");
+                System.out.println("Order ID: " + orderId);
+                System.out.printf("Total Amount: Rs. %.2f%n",
+                        total);
+
+            } catch (Exception e) {
+                con.rollback();
+                System.out.println(
+                        "Order failed. All order changes rolled back.");
+                throw e;
+            } finally {
+                con.setAutoCommit(true);
+            }
+        }
+    }
+
+    // Module 4: Order History
+    private static void orderHistory() throws SQLException {
+
+        System.out.print("Enter Customer ID: ");
+        int customerId = readInt();
+
+        String sql = "SELECT order_id, order_date, total_amount "
+                + "FROM orders WHERE customer_id = ? "
+                + "ORDER BY order_date DESC";
+
+        System.out.println("\n--- Order History ---");
+
+        try (Connection con = getConnection();
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setInt(1, customerId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean found = false;
+
+                System.out.printf("%-10s %-25s %12s%n",
+                        "Order ID", "Order Date", "Total");
+
+                while (rs.next()) {
+                    found = true;
+
+                    System.out.printf("%-10d %-25s %12.2f%n",
+                            rs.getInt("order_id"),
+                            rs.getTimestamp("order_date"),
+                            rs.getDouble("total_amount"));
+                }
+
+                if (!found) {
+                    System.out.println(
+                            "No orders found for this customer.");
+                }
+            }
+        }
+    }
+
+    // Module 5: Generate Bill
+    private static void generateBill() throws SQLException {
+
+        System.out.print("Enter Order ID: ");
+        int orderId = readInt();
+
+        String orderSql =
+                "SELECT o.order_id, o.order_date, o.total_amount, "
+                + "c.name, c.email, c.phone, c.address "
+                + "FROM orders o "
+                + "JOIN customers c "
+                + "ON o.customer_id = c.customer_id "
+                + "WHERE o.order_id = ?";
+
+        String itemsSql =
+                "SELECT m.item_name, oi.quantity, oi.price, "
+                + "(oi.quantity * oi.price) AS subtotal "
+                + "FROM order_items oi "
+                + "JOIN menu m ON oi.item_id = m.item_id "
+                + "WHERE oi.order_id = ?";
+
+        try (Connection con = getConnection();
+             PreparedStatement ps =
+                     con.prepareStatement(orderSql)) {
+
+            ps.setInt(1, orderId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    System.out.println("Order not found.");
+                    return;
+                }
+
+                System.out.println("\n========== FOOD BILL ==========");
+                System.out.println("Order ID : "
+                        + rs.getInt("order_id"));
+                System.out.println("Date     : "
+                        + rs.getTimestamp("order_date"));
+                System.out.println("Customer : "
+                        + rs.getString("name"));
+                System.out.println("Email    : "
+                        + rs.getString("email"));
+                System.out.println("Phone    : "
+                        + rs.getString("phone"));
+                System.out.println("Address  : "
+                        + rs.getString("address"));
+
+                System.out.println("----------------------------------------------");
+                System.out.printf("%-20s %5s %9s %10s%n",
+                        "Item", "Qty", "Price", "Subtotal");
+                System.out.println("----------------------------------------------");
+
+                try (PreparedStatement itemPs =
+                             con.prepareStatement(itemsSql)) {
+
+                    itemPs.setInt(1, orderId);
+
+                    try (ResultSet items = itemPs.executeQuery()) {
+                        while (items.next()) {
+                            System.out.printf(
+                                    "%-20s %5d %9.2f %10.2f%n",
+                                    items.getString("item_name"),
+                                    items.getInt("quantity"),
+                                    items.getDouble("price"),
+                                    items.getDouble("subtotal"));
+                        }
+                    }
+                }
+
+                System.out.println("----------------------------------------------");
+                System.out.printf("Grand Total: Rs. %.2f%n",
+                        rs.getDouble("total_amount"));
+                System.out.println("==============================================");
+            }
+        }
+    }
+}
