@@ -1,0 +1,325 @@
+package onlinefoodordering;
+
+
+import java.sql.*;
+import java.util.Scanner;
+
+public class VehicleServiceCenter {
+
+    static final String URL =
+            "jdbc:mysql://localhost:3306/vehicleservice";
+    static final String USER = "root";
+    static final String PASSWORD = "12345";
+
+    static Scanner sc = new Scanner(System.in);
+
+    // Connect Java to MySQL
+    static Connection connect() throws SQLException {
+        return DriverManager.getConnection(URL, USER, PASSWORD);
+    }
+
+    static int readInt(String message) {
+        while (true) {
+            System.out.print(message);
+            try {
+                return Integer.parseInt(sc.nextLine().trim());
+            } catch (NumberFormatException e) {
+                System.out.println("Enter a valid number.");
+            }
+        }
+    }
+
+    // Main menu
+    public static void main(String[] args) {
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+
+            while (true) {
+                System.out.println(
+                        "\n===== VEHICLE SERVICE CENTER =====");
+                System.out.println("1. Customer Registration");
+                System.out.println("2. Vehicle Registration");
+                System.out.println("3. Service Booking");
+                System.out.println("4. Service History");
+                System.out.println("5. Search Vehicle");
+                System.out.println("0. Exit");
+
+                int choice = readInt("Enter choice: ");
+
+                try {
+                    switch (choice) {
+                        case 1:
+                            registerCustomer();
+                            break;
+                        case 2:
+                            registerVehicle();
+                            break;
+                        case 3:
+                            bookService();
+                            break;
+                        case 4:
+                            serviceHistory();
+                            break;
+                        case 5:
+                            searchVehicle();
+                            break;
+                        case 0:
+                            System.out.println("Thank you!");
+                            return;
+                        default:
+                            System.out.println("Invalid choice.");
+                    }
+                } catch (SQLException e) {
+                	e.printStackTrace();
+                }
+            }
+
+        } catch (Exception e) {
+            System.out.println("Application error: "
+                    + e.getMessage());
+        }
+    }
+
+    // MODULE 1: Customer Registration
+    static void registerCustomer() throws SQLException {
+        System.out.print("Enter customer name: ");
+        String name = sc.nextLine().trim();
+
+        System.out.print("Enter phone: ");
+        String phone = sc.nextLine().trim();
+
+        System.out.print("Enter email (optional): ");
+        String email = sc.nextLine().trim();
+
+        if (name.isEmpty() || phone.isEmpty()) {
+            System.out.println("Name and phone are required.");
+            return;
+        }
+
+        String sql = "INSERT INTO customers(name, phone, email) "
+                + "VALUES (?, ?, ?)";
+
+        try (Connection con = connect();
+             PreparedStatement ps = con.prepareStatement(
+                     sql, Statement.RETURN_GENERATED_KEYS)) {
+
+            ps.setString(1, name);
+            ps.setString(2, phone);
+
+            if (email.isEmpty()) {
+                ps.setNull(3, Types.VARCHAR);
+            } else {
+                ps.setString(3, email);
+            }
+
+            ps.executeUpdate();
+
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    System.out.println(
+                            "Customer registered successfully!");
+                    System.out.println(
+                            "Customer ID: " + rs.getInt(1));
+                }
+            }
+        }
+    }
+
+    // MODULE 2: Vehicle Registration
+    static void registerVehicle() throws SQLException {
+        int customerId = readInt("Enter customer ID: ");
+
+        System.out.print("Enter vehicle number: ");
+        String number = sc.nextLine().trim().toUpperCase();
+
+        System.out.print("Enter vehicle model: ");
+        String model = sc.nextLine().trim();
+
+        if (number.isEmpty() || model.isEmpty()) {
+            System.out.println(
+                    "Vehicle number and model are required.");
+            return;
+        }
+
+        String sql = "INSERT INTO vehicles "
+                + "(customer_id, vehicle_number, model) "
+                + "VALUES (?, ?, ?)";
+
+        try (Connection con = connect();
+             PreparedStatement ps = con.prepareStatement(
+                     sql, Statement.RETURN_GENERATED_KEYS)) {
+
+            ps.setInt(1, customerId);
+            ps.setString(2, number);
+            ps.setString(3, model);
+
+            ps.executeUpdate();
+
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    System.out.println(
+                            "Vehicle registered successfully!");
+                    System.out.println(
+                            "Vehicle ID: " + rs.getInt(1));
+                }
+            }
+        }
+    }
+
+    // MODULE 3: Service Booking
+    static void bookService() throws SQLException {
+        int vehicleId = readInt("Enter vehicle ID: ");
+
+        System.out.print("Enter service type: ");
+        String type = sc.nextLine().trim();
+
+        System.out.print("Enter service date (YYYY-MM-DD): ");
+        Date date;
+
+        try {
+            date = Date.valueOf(sc.nextLine().trim());
+        } catch (IllegalArgumentException e) {
+            System.out.println(
+                    "Invalid date. Use YYYY-MM-DD.");
+            return;
+        }
+
+        System.out.print("Enter service cost: ");
+        java.math.BigDecimal cost;
+
+        try {
+            cost = new java.math.BigDecimal(
+                    sc.nextLine().trim());
+
+            if (cost.signum() < 0 || cost.scale() > 2) {
+                throw new NumberFormatException();
+            }
+        } catch (NumberFormatException e) {
+            System.out.println(
+                    "Cost must be non-negative with at most 2 decimals.");
+            return;
+        }
+
+        if (type.isEmpty()) {
+            System.out.println("Service type is required.");
+            return;
+        }
+
+        String sql = "INSERT INTO service_records "
+                + "(vehicle_id, service_type, service_date, cost) "
+                + "VALUES (?, ?, ?, ?)";
+
+        try (Connection con = connect();
+             PreparedStatement ps = con.prepareStatement(
+                     sql, Statement.RETURN_GENERATED_KEYS)) {
+
+            ps.setInt(1, vehicleId);
+            ps.setString(2, type);
+            ps.setDate(3, date);
+            ps.setBigDecimal(4, cost);
+
+            ps.executeUpdate();
+
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    System.out.println(
+                            "Service booked successfully!");
+                    System.out.println(
+                            "Service ID: " + rs.getInt(1));
+                }
+            }
+        }
+    }
+
+    // MODULE 4: Service History using JOIN
+    static void serviceHistory() throws SQLException {
+        int vehicleId = readInt("Enter vehicle ID: ");
+
+        String sql =
+                "SELECT c.name, c.phone, v.vehicle_number, "
+                + "v.model, s.service_id, s.service_type, "
+                + "s.service_date, s.cost, s.status "
+                + "FROM customers c "
+                + "JOIN vehicles v ON c.customer_id = v.customer_id "
+                + "JOIN service_records s ON v.vehicle_id = s.vehicle_id "
+                + "WHERE v.vehicle_id = ? "
+                + "ORDER BY s.service_date DESC, s.service_id DESC";
+
+        try (Connection con = connect();
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setInt(1, vehicleId);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean found = false;
+
+                while (rs.next()) {
+                    found = true;
+
+                    System.out.println("\n--- Service History ---");
+                    System.out.println("Customer: "
+                            + rs.getString("name"));
+                    System.out.println("Phone: "
+                            + rs.getString("phone"));
+                    System.out.println("Vehicle: "
+                            + rs.getString("vehicle_number"));
+                    System.out.println("Model: "
+                            + rs.getString("model"));
+                    System.out.println("Service ID: "
+                            + rs.getInt("service_id"));
+                    System.out.println("Service: "
+                            + rs.getString("service_type"));
+                    System.out.println("Date: "
+                            + rs.getDate("service_date"));
+                    System.out.println("Cost: Rs. "
+                            + rs.getBigDecimal("cost"));
+                    System.out.println("Status: "
+                            + rs.getString("status"));
+                }
+
+                if (!found) {
+                    System.out.println(
+                            "No service records found.");
+                }
+            }
+        }
+    }
+
+    // Search by vehicle number using JOIN
+    static void searchVehicle() throws SQLException {
+        System.out.print("Enter vehicle number: ");
+        String number = sc.nextLine().trim();
+
+        String sql =
+                "SELECT c.name, c.phone, v.vehicle_id, "
+                + "v.vehicle_number, v.model "
+                + "FROM vehicles v "
+                + "JOIN customers c "
+                + "ON v.customer_id = c.customer_id "
+                + "WHERE UPPER(v.vehicle_number) = UPPER(?)";
+
+        try (Connection con = connect();
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setString(1, number);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    System.out.println("\n--- Vehicle Details ---");
+                    System.out.println("Vehicle ID: "
+                            + rs.getInt("vehicle_id"));
+                    System.out.println("Number: "
+                            + rs.getString("vehicle_number"));
+                    System.out.println("Model: "
+                            + rs.getString("model"));
+                    System.out.println("Owner: "
+                            + rs.getString("name"));
+                    System.out.println("Phone: "
+                            + rs.getString("phone"));
+                } else {
+                    System.out.println("Vehicle not found.");
+                }
+            }
+        }
+    }
+}
